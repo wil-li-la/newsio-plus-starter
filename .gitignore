@@ -1,0 +1,15 @@
+# 訓練資料（透過 email 取得，不進版控）
+data/*.jsonl
+
+# 訓練輸出（adapter、checkpoints）
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 雜項
+.DS_Store
+.ipynb_checkpoints/
