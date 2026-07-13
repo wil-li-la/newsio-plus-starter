@@ -1,5 +1,7 @@
 # 訓練資料（透過 email 取得，不進版控）
 data/*.jsonl
+# 但公開的 10 筆範例資料要進版控，讓大家在拿到完整資料前就能 smoke-test
+!data/sample.jsonl
 
 # 訓練輸出（adapter、checkpoints）
 out/

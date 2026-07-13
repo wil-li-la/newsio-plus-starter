@@ -181,6 +181,17 @@ def clean_records(records):
 def main():
     args = parse_args()
 
+    # 先確認資料在不在（放在 CUDA 檢查之前）：不然沒切 GPU 的 Colab 使用者
+    # 會先看到 CUDA 錯誤，卻不知道其實 train.jsonl 也還沒放好。
+    if not os.path.exists(args.data):
+        raise SystemExit(
+            f"找不到 {args.data}。\n"
+            "請先到 https://plus.newsio.io/data.html 用 Google 登入下載 train.jsonl，"
+            "放進 data/ 資料夾。\n"
+            "或者先用內建的 10 筆範例資料 smoke-test（不用等 email）：\n"
+            "  python train_lora.py --data data/sample.jsonl --max-samples 10 --val-frac 0"
+        )
+
     if not torch.cuda.is_available():
         raise SystemExit(
             "找不到 CUDA GPU。4-bit QLoRA 訓練需要 NVIDIA GPU；"
