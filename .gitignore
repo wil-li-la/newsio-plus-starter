@@ -13,3 +13,6 @@ venv/
 # 雜項
 .DS_Store
 .ipynb_checkpoints/
+
+# 訓練/評估產生的紀錄檔
+*.log

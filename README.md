@@ -21,7 +21,12 @@ Colab T4 就能訓練。
 - Python 3.10 以上
 - NVIDIA GPU（VRAM 8GB 以上，訓練用 4-bit QLoRA）
   - 沒有 GPU？直接用免費的 [Google Colab（T4）](#colab)
-- 磁碟空間約 10GB（模型權重 + 資料）
+  - **比較新的顯示卡（RTX 40／50 系列）**：要裝夠新、CUDA build 相符的 PyTorch
+    （例如 `cu12x`／`cu13`）。裝到太舊的 torch，訓練時會出現
+    `CUDA error: no kernel image is available for execution on the device`。
+- 磁碟空間**約 15GB**：torch + CUDA 套件約 6GB、基底模型約 6.5GB，另外 pip
+  下載時預設還會佔用約 5GB 的快取。空間很緊的話，安裝時加 `--no-cache-dir`
+  （見下方），避免快取把硬碟塞爆、導致模型只下載一半而壞掉。
 
 ## 快速開始
 
@@ -33,7 +38,7 @@ cd newsio-plus-starter
 # 2. 建立虛擬環境並安裝套件
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install --no-cache-dir -r requirements.txt   # --no-cache-dir 省下約 5GB 快取
 
 # 3. 把 email 收到的 train.jsonl 放進 data/
 #    （怎麼拿到資料？見下一節）
@@ -83,7 +88,14 @@ system 是固定的翻譯編輯指令，user 是英文標題 + 重點，assistan
 | `--batch` | 2 | 每張 GPU 一次吃幾筆。VRAM 不夠就調成 1（腳本會用 gradient accumulation 補回有效 batch size）。 |
 | `--lr` | 2e-4 | 學習率。LoRA 常用 1e-4 ~ 3e-4。 |
 | `--max-samples` | 全部 | 只用前 N 筆訓練，想快速實驗時很好用。 |
+| `--val-frac` | 0.05 | 切多少比例當**驗證集**：每個 epoch 會印一次 `eval_loss`，用來判斷有沒有 overfit。設 `0` 可關掉。 |
+| `--keep-empty-bullets` | 關 | 預設會**丟掉 `zh_bullets` 為空的資料**（原始資料約 12% 是空的，留著會教模型「有時候不用輸出重點」）。加這個旗標可保留全部資料。 |
 | `--model` | unsloth/Llama-3.2-3B-Instruct | 基底模型。也可以改成 meta-llama/Llama-3.2-3B-Instruct（需要先在 Hugging Face 申請存取權）。 |
+
+> **資料清理與驗證集**：預設 `train_lora.py` 會先濾掉沒有繁中重點的資料，再切
+> 5% 出來當驗證集。訓練時每個 epoch 會看到 `train` 和 `eval` 兩個 loss —
+> 如果 `train_loss` 一直降但 `eval_loss` 開始回升，就是 overfit 了。
+> 想在**沒看過的資料**上算翻譯品質（chrF、繁簡、重點數…），用 `eval_translate.py`。
 
 訓練完成後，adapter 會存在 `out/adapter/`（只有幾十 MB —— 這就是 LoRA 的好處）。
 
@@ -104,6 +116,25 @@ python test_translate.py \
 
 腳本會載入基底模型 + 你剛訓練好的 `out/adapter/`，印出繁體中文翻譯。
 想對比「微調前 vs 微調後」，加上 `--no-adapter` 就能看原始模型的表現。
+
+### 用數字驗證：`eval_translate.py`
+
+只看一則翻譯不夠客觀。`eval_translate.py` 會對一批新聞分別用「基底模型」和
+「基底模型 + adapter」翻譯，再和資料裡真正的繁中翻譯比對，算出幾個指標：
+
+```bash
+python eval_translate.py --n 200            # 從 data/train.jsonl 抽 200 筆比較
+```
+
+| 指標 | 意義 | 方向 |
+| --- | --- | --- |
+| `chrF` | 和參考翻譯的字元 n-gram 相似度（中文比 BLEU 合適） | 越高越好 |
+| 重點數一致 | 產生的重點數量和參考是否相同 | 越高越好 |
+| 簡體字比例 | 不小心吐簡體字的比例（我們要 zh-TW 繁體） | 越低越好 |
+| 英文殘留字數 | 沒翻到的英文（GPT／API 這種專有名詞保留是正常的，只當參考） | 越低越好 |
+
+想要**乾淨的類推分數**（模型沒看過的資料），先切一份 hold-out 出來，訓練時避開它，
+再用 `--data <holdout.jsonl>` 評估。
 
 ## Colab
 

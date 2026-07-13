@@ -10,6 +10,10 @@
 用法：
   python train_lora.py                       # 預設 r=16、1 epoch、全部資料
   python train_lora.py --rank 8 --epochs 2 --max-samples 2000
+
+預設會：
+  * 丟掉「沒有繁中重點（zh_bullets 為空）」的資料（--keep-empty-bullets 可保留）
+  * 切 5% 出來當驗證集，每個 epoch 印一次 eval loss（--val-frac 0 可關掉）
 """
 
 import argparse
@@ -100,13 +104,15 @@ def tokenize_record(record, tokenizer):
     messages = build_messages(record)
 
     # 完整對話（含 assistant 答案）— 訓練用，不加 generation prompt。
+    # 注意：transformers 5.x 下 tokenize=True 會回傳 BatchEncoding（dict），
+    # 要取 ['input_ids'] 才是 list[int]（舊版直接回傳 list[int]）。
     full_ids = tokenizer.apply_chat_template(
-        messages, tokenize=True, add_generation_prompt=False
-    )
+        messages, tokenize=True, add_generation_prompt=False, return_dict=True
+    )["input_ids"]
     # 只有 prompt（system+user）+ assistant 開頭標記 — 用來知道要遮住幾個 token。
     prompt_ids = tokenizer.apply_chat_template(
-        messages[:-1], tokenize=True, add_generation_prompt=True
-    )
+        messages[:-1], tokenize=True, add_generation_prompt=True, return_dict=True
+    )["input_ids"]
 
     full_ids = full_ids[:MAX_LENGTH]
     labels = list(full_ids)
@@ -153,7 +159,23 @@ def parse_args():
                         help="只用前 N 筆資料（預設全部 14,746 筆）")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL,
                         help=f"基底模型，預設 {DEFAULT_MODEL}")
+    parser.add_argument("--data", type=str, default=DATA_PATH,
+                        help=f"訓練資料路徑，預設 {DATA_PATH}")
+    parser.add_argument("--out", type=str, default=ADAPTER_DIR,
+                        help=f"adapter 輸出資料夾，預設 {ADAPTER_DIR}")
+    parser.add_argument("--val-frac", type=float, default=0.05,
+                        help="切多少比例當驗證集（每 epoch 印 eval loss）；預設 0.05，設 0 關掉")
+    parser.add_argument("--keep-empty-bullets", action="store_true",
+                        help="保留 zh_bullets 為空的資料（預設會丟掉，避免模型學會不輸出重點）")
     return parser.parse_args()
+
+
+def clean_records(records):
+    """丟掉沒有繁中重點的資料 — 約 12%% 的原始資料 zh_bullets 是空的，
+    留著會教模型「有時候不用輸出重點」。回傳 (乾淨資料, 丟掉筆數)。"""
+    kept = [r for r in records
+            if (r.get("zh_bullets") or []) and str(r.get("zh_title") or "").strip()]
+    return kept, len(records) - len(kept)
 
 
 def main():
@@ -172,8 +194,12 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token  # Llama 沒有 pad token，借用 eos
 
     # ---- 資料 ----
-    print(f"載入 {DATA_PATH} ...")
-    records = load_records(DATA_PATH, args.max_samples)
+    print(f"載入 {args.data} ...")
+    records = load_records(args.data, args.max_samples)
+    if not args.keep_empty_bullets:
+        records, dropped = clean_records(records)
+        print(f"資料清理：丟掉 {dropped:,} 筆空 zh_bullets 的資料"
+              f"（加 --keep-empty-bullets 可保留）")
     print(f"共 {len(records):,} 筆訓練配對")
 
     dataset = Dataset.from_list(records)
@@ -185,6 +211,14 @@ def main():
     # 保險起見：prompt 就把長度吃滿的樣本（assistant 完全被截掉）直接丟掉。
     dataset = dataset.filter(lambda ex: ex["prompt_len"] < len(ex["input_ids"]))
     dataset = dataset.remove_columns(["prompt_len"])
+
+    # ---- 切訓練 / 驗證集 ----
+    # 拿一小塊「訓練時不會看到」的資料當驗證集，才能判斷有沒有 overfit。
+    eval_dataset = None
+    if args.val_frac and args.val_frac > 0 and len(dataset) >= 20:
+        split = dataset.train_test_split(test_size=args.val_frac, seed=42)
+        dataset, eval_dataset = split["train"], split["test"]
+        print(f"切出驗證集：訓練 {len(dataset):,} 筆 / 驗證 {len(eval_dataset):,} 筆")
 
     # ---- 基底模型（4-bit nf4 量化 → 3B 模型約 2GB VRAM）----
     print(f"以 4-bit 載入 {args.model} ...")
@@ -228,14 +262,17 @@ def main():
     # gradient accumulation 會自動補上（例如 batch=1 → 累積 16 步才更新一次）。
     grad_accum = max(1, 16 // args.batch)
     training_args = TrainingArguments(
-        output_dir=os.path.join("out", "checkpoints"),
+        output_dir=os.path.join(args.out, "checkpoints"),
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch,
+        per_device_eval_batch_size=args.batch,
         gradient_accumulation_steps=grad_accum,
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
         warmup_ratio=0.03,
         logging_steps=20,
+        # 有驗證集就每個 epoch 評估一次，印出 eval loss（看有沒有 overfit）。
+        eval_strategy="epoch" if eval_dataset is not None else "no",
         bf16=use_bf16,
         fp16=not use_bf16,
         optim="paged_adamw_8bit",
@@ -250,15 +287,16 @@ def main():
         model=model,
         args=training_args,
         train_dataset=dataset,
+        eval_dataset=eval_dataset,
         data_collator=PadCollator(pad_token_id=tokenizer.pad_token_id),
     )
     trainer.train()
 
     # ---- 存檔 ----
-    os.makedirs(ADAPTER_DIR, exist_ok=True)
-    model.save_pretrained(ADAPTER_DIR)
-    tokenizer.save_pretrained(ADAPTER_DIR)
-    print(f"\n完成！adapter 已存到 {ADAPTER_DIR}/")
+    os.makedirs(args.out, exist_ok=True)
+    model.save_pretrained(args.out)
+    tokenizer.save_pretrained(args.out)
+    print(f"\n完成！adapter 已存到 {args.out}/")
     print("下一步：python test_translate.py 試翻一則新聞。")
 
 

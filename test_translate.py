@@ -91,9 +91,12 @@ def main():
     ]
 
     # add_generation_prompt=True → 在結尾加上 assistant 起始標記，請模型接著寫翻譯。
-    input_ids = tokenizer.apply_chat_template(
-        messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+    # transformers 5.x 下 tokenize=True 會回傳 BatchEncoding（dict），要取 ["input_ids"]。
+    encoded = tokenizer.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True,
+        return_dict=True, return_tensors="pt",
     ).to(model.device)
+    input_ids = encoded["input_ids"]
 
     print("\n=== 英文原文 ===")
     print(user_text)
