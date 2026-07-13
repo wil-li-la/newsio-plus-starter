@@ -161,5 +161,22 @@ notebook：[`colab_train.ipynb`](colab_train.ipynb) —— 安裝套件、上傳
 
 ## 授權
 
-程式碼以 [MIT License](LICENSE) 釋出 © 2026 Newsio。
-訓練資料（train.jsonl）僅供教學用途，請勿再散布。
+- **程式碼**：以 [MIT License](LICENSE) 釋出 © 2026 Newsio。
+- **訓練資料**（`train.jsonl`）：僅供教學用途，請勿再散布。
+- **基底模型 Llama 3.2**：受 [Meta Llama 3.2 社群授權](https://www.llama.com/llama3_2/license/)
+  規範（**不是** MIT／Apache 這種完全開放的授權）。不管你用哪個 HF 鏡像，使用權重就等於同意它。重點：
+  - 研究與商業用途都免費；只有**月活躍用戶超過 7 億**的公司才需要另外向 Meta 申請授權。
+  - 「不可在歐盟使用」的限制**只適用於多模態（vision）版本**；本課程用的 **1B／3B 純文字模型在歐盟可以正常使用**。
+  - 再散布模型時要標註「Built with Llama」並附上授權檔。
+
+### 需要下載模型的存取權嗎？
+
+- **預設的 `unsloth/Llama-3.2-3B-Instruct`（本課程用的）**：**不用**。這個鏡像沒有 gated，
+  不需要 Hugging Face 帳號、token 或申請核准，`train_lora.py` 直接就能下載。
+- **官方的 `meta-llama/Llama-3.2-3B-Instruct`（用 `--model` 才會用到）**：**要**。官方 repo 是
+  gated 的，步驟如下：
+  1. 到 [模型頁面](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) 登入 Hugging Face、
+     填表接受 Meta 的授權，等核准（Llama 3.2 通常很快）。
+  2. 到 [Settings → Access Tokens](https://huggingface.co/settings/tokens) 產生一組 token。
+  3. 本機登入：`huggingface-cli login`（或設環境變數 `export HF_TOKEN=hf_xxx`）。
+  4. 再跑 `python train_lora.py --model meta-llama/Llama-3.2-3B-Instruct`。
