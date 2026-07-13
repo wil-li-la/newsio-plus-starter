@@ -54,7 +54,21 @@ python train_lora.py
 python train_lora.py --rank 8 --epochs 2 --batch 1 --lr 1e-4 --max-samples 2000
 ```
 
-## 資料哪裡來
+## 先跑跑看：內建範例資料
+
+還沒拿到 email 的完整資料，也可以先用 repo 裡附的 **`data/sample.jsonl`**
+（10 筆、涵蓋 genai／semiconductor／fintech）跑一遍，確認環境沒問題：
+
+```bash
+python train_lora.py --data data/sample.jsonl --max-samples 10 --val-frac 0
+```
+
+這一步能在等 email 之前就先驗證：PyTorch + CUDA 在你的機器上跑得起來（尤其
+RTX 40／50 系列）、基底模型（約 6.5GB）下載沒壞掉、tokenizer 的 chat template
+在你的 transformers 版本正常、整個訓練迴圈至少能前進一步。10 筆資料當然訓練
+不出好模型 —— 它只是用來 smoke-test。
+
+## 資料哪裡來（完整 14,746 筆）
 
 到 **https://plus.newsio.io/data.html** 用 Google 帳號登入，按「寄送資料」，
 `train.jsonl` 的下載連結會寄到你的信箱（連結 7 天內有效）。
